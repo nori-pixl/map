@@ -2,14 +2,35 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>学区内公共施設アンロック</title>
-    <link rel="stylesheet" href="https://unpkg.com" />
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #eef2f3; overflow: hidden; }
-        #map { width: 100%; height: 55%; position: absolute; top: 0; z-index: 1; }
+        body, html { margin: 0; padding: 0; height: 100vh; width: 100vw; font-family: sans-serif; background: #eef2f3; overflow: hidden; }
+        
+        /* 🗺️ 上の枠：本物のGoogleマップのサイトを丸ごと埋め込み表示 */
+        #map-container { 
+            position: absolute; 
+            top: 0; 
+            left: 0;
+            width: 100vw; 
+            height: 55vh; 
+            z-index: 1; 
+            border: none;
+        }
+        #map-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+        /* 🏢 下半分の情報パネル */
         #panel {
-            position: absolute; bottom: 0; width: 100%; height: 45%; z-index: 10;
+            position: absolute; 
+            bottom: 0; 
+            left: 0;
+            width: 100vw; 
+            height: 45vh; 
+            z-index: 10;
             background: white; border-top-left-radius: 24px; border-top-right-radius: 24px;
             box-shadow: 0 -8px 24px rgba(0,0,0,0.15); display: flex; flex-direction: column;
         }
@@ -40,9 +61,15 @@
 </head>
 <body>
 
+    <!-- 🔘 GPSの裏側処理を走らせるボタン -->
     <button id="gps-start-btn" onclick="startGPS()">📡 タップしてGPS接続</button>
 
-    <div id="map"></div>
+    <!-- 🗺️ 上の枠：ここにGoogleマップのWEBサイトを表示させます -->
+    <div id="map-container">
+        <!-- 💡 初期位置：あなたの学区（例：若林区周辺）のマップを表示。倍率も自由に変えられます -->
+        <iframe id="gmap" src="https://google.com"></iframe>
+    </div>
+
     <div id="panel">
         <div class="header">
             <h2>🏢 公共施設アンロッククエスト</h2>
@@ -51,26 +78,15 @@
         <div class="list-container" id="list"></div>
     </div>
 
-    <script src="https://unpkg.com"></script>
     <script>
-        let map, playerMarker, mapCircles = {}, isFirstLocation = true;
+        let playerMarker, isFirstLocation = true;
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
 
-        // 🏫 学区内施設データ（初期表示用の座標もここに合わせます）
+        // 🏫 学区内施設データ（実際の座標）
         const facilities = [
             { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
         ];
-
-        // 地図の初期化（施設のある座標を初期位置にセット）
-        map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-        // ⭐【国土地理院マップに変更】日本の公共サーバーから超高速で読み込みます
-        L.tileLayer('https://gsi.go.jp{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: '<a href="https://gsi.go.jp" target="_blank">国土地理院</a>'
-        }).addTo(map);
 
         function startGPS() {
             const btn = document.getElementById('gps-start-btn');
@@ -78,6 +94,7 @@
             btn.textContent = "⌛ 電波を探しています...";
 
             if (navigator.geolocation) {
+                // 安全第一で、まずは確実に動く低精度から裏で接続
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
                     enableHighAccuracy: false, 
                     maximumAge: 30000,
@@ -102,14 +119,6 @@
                 card.className = `facility-card ${isUnlocked ? 'unlocked' : ''}`;
                 card.innerHTML = `<div class="icon">${f.icon}</div><div class="info"><div class="name">${isUnlocked ? f.name : "？？？（未解放）"}</div><div class="desc">${isUnlocked ? f.desc : "この付近に行くと施設がアンロックされるぞ！"}</div></div>`;
                 listContainer.appendChild(card);
-
-                const circleColor = isUnlocked ? '#3498db' : '#95a5a6';
-                if (mapCircles[f.id]) {
-                    mapCircles[f.id].setStyle({ color: circleColor, fillColor: circleColor });
-                } else {
-                    const circle = L.circle([f.lat, f.lng], { color: circleColor, fillColor: circleColor, fillOpacity: 0.25, radius: 30 }).addTo(map);
-                    mapCircles[f.id] = circle;
-                }
             });
             const percent = Math.round((unlockCount / facilities.length) * 100);
             document.getElementById('progress').textContent = `解放率: ${percent}% (${unlockCount}/${facilities.length})`;
@@ -132,27 +141,21 @@
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
 
-            if (!playerMarker) {
-                playerMarker = L.circleMarker([pLat, pLng], { color: '#e74c3c', radius: 9, fillColor: '#fff', fillOpacity: 1, weight: 3 }).addTo(map);
-            } else {
-                playerMarker.setLatLng([pLat, pLng]);
-            }
+            // ⭐【神ワザ】GPSの位置が変わるたびに、Googleマップのサイトをあなたの現在地（pLat, pLng）に自動更新！
+            // 地図が自動であなたのいる場所へワープし、現在地マーク（青い丸など）もGoogle純正の動きで表示されます
+            const iframe = document.getElementById('gmap');
+            iframe.src = `https://google.com{pLat},${pLng}&z=16&t=m`;
 
             if (isFirstLocation) {
-                map.setView([pLat, pLng], 16); 
                 isFirstLocation = false;
-                
-                // タイルバグ対策：画面のサイズ変更イベントを強制的に呼んで地図をリフレッシュする
-                setTimeout(() => { map.invalidateSize(); }, 200);
-
+                // 2回目以降は、より正確に判定するため最高精度へ自動切り替え
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
                     enableHighAccuracy: true, 
                     maximumAge: 0 
                 });
-            } else {
-                map.panTo([pLat, pLng]);
             }
 
+            // 公共施設の距離チェック（30m以内でアンロック）
             facilities.forEach(f => {
                 if (unlockedIds.includes(f.id)) return;
                 if (getDistance(pLat, pLng, f.lat, f.lng) <= 30) {
@@ -168,9 +171,6 @@
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#e74c3c";
             btn.textContent = "❌ 接続失敗（再試行）";
-            if(err.code === 1) {
-                alert("位置情報が拒否されました。設定を確認してください。");
-            }
         }
 
         updateUI();
