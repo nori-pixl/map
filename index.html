@@ -89,17 +89,15 @@
 
     <!-- 地図プログラムの読み込み -->
     <script src="https://unpkg.com"></script><script>
-        let map, playerMarker, mapCircles = {}, isFirstLocation = true;
+                let map, playerMarker, mapCircles = {}, isFirstLocation = true;
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
 
-        // 🏫 学区内施設データ（初期位置をここに固定してフリーズを回避します）
-        // 実際の学校や図書館の緯度（lat）・経度（lng）に書き換え可能です！
+        // 🏫 学区内施設データ（例：若林区周辺）
         const facilities = [
             { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
         ];
 
-        // 📊 ゲージをコントロールする関数
         function updateProgressBar(widthPercent, text) {
             const fill = document.getElementById('pb-fill');
             const status = document.getElementById('loading-status');
@@ -108,18 +106,18 @@
         }
 
         // =========================================================
-        // 🔄 ステップ1: 起動直後に位置情報の権限要求（10%）
+        // 🔄 ステップ1: 起動直後に位置情報の要求を開始（10%）
         // =========================================================
         updateProgressBar(10, "位置情報の権限を要求中...");
 
         if (navigator.geolocation) {
+            // ⭐ 【超重要】フリーズ回避のため、最初は確実に動く低精度要求から試すように設定を緩和
             navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
-                enableHighAccuracy: true, // 最高精度のGPSを使用
-                maximumAge: 0,
-                timeout: 20000
+                enableHighAccuracy: false, // 🟥 最初はハードウェアGPSを強制せず、通信局のデータも受け入れる（超重要）
+                maximumAge: 30000,         // 30秒前のキャッシュ位置情報も許容して最速で画面を開く
+                timeout: 25000             // 電波を待つ時間を25秒に延長
             });
             
-            // 少し時間をずらして地図の初期化をスタート
             setTimeout(() => {
                 // =========================================================
                 // 🔄 ステップ2: 地図エンジンのセットアップ（40%）
@@ -147,7 +145,6 @@
             document.getElementById('loading-title').textContent = "対応していません";
         }
 
-        // 施設リストと地図上のサークルを最新状態にする関数
         function updateUI() {
             const listContainer = document.getElementById('list');
             if (!listContainer) return;
@@ -175,7 +172,6 @@
             document.getElementById('progress').textContent = `解放率: ${percent}% (${unlockCount}/${facilities.length})`;
         }
 
-        // 2点間の距離を計算する関数（メートル単位）
         function getDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
@@ -191,7 +187,7 @@
             if (isFirstLocation) {
                 updateProgressBar(100, "位置情報の同期が完了しました！");
                 
-                // ロード画面をスムーズに消去
+                // ロード画面を消す
                 setTimeout(() => {
                     const overlay = document.getElementById('loading-overlay');
                     if (overlay) {
@@ -199,12 +195,17 @@
                         setTimeout(() => { overlay.style.display = 'none'; }, 500);
                     }
                 }, 400);
+
+                // ⭐ 一度画面が開いたら、ここからバックグラウンドで最高精度モード（HighAccuracy）に自動格上げ要求を飛ばす
+                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
+                    enableHighAccuracy: true, 
+                    maximumAge: 0 
+                });
             }
 
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
 
-            // プレイヤー位置を指すピン（赤いサークル）
             if (!playerMarker) {
                 playerMarker = L.circleMarker([pLat, pLng], { color: '#e74c3c', radius: 9, fillColor: '#fff', fillOpacity: 1, weight: 3 }).addTo(map);
             } else {
@@ -215,13 +216,12 @@
                 map.setView([pLat, pLng], 16); 
                 isFirstLocation = false;
             } else {
-                map.panTo([pLat, pLng]); // プレイヤーを画面中心に自動追跡
+                map.panTo([pLat, pLng]);
             }
 
-            // 各施設との距離をチェック
             facilities.forEach(f => {
                 if (unlockedIds.includes(f.id)) return;
-                if (getDistance(pLat, pLng, f.lat, f.lng) <= 30) { // 30m以内でアンロック
+                if (getDistance(pLat, pLng, f.lat, f.lng) <= 30) {
                     unlockedIds.push(f.id);
                     localStorage.setItem('unlockedFacilities', JSON.stringify(unlockedIds));
                     updateUI();
@@ -229,16 +229,14 @@
             });
         }
 
-        // 位置情報の取得エラー時
         function onLocationError(err) {
             console.log("GPSエラー:", err.message);
             document.getElementById('loading-title').textContent = "⚠️ 同期に失敗しました";
-            document.getElementById('loading-status').textContent = "ブラウザまたは端末の設定から位置情報を「許可」してください。";
+            document.getElementById('loading-status').textContent = `原因: ${err.message} (設定から位置情報を許可して再度お試しください)`;
             const fill = document.getElementById('pb-fill');
-            if (fill) fill.style.background = "#e74c3c"; // ゲージを警告の赤色にする
+            if (fill) fill.style.background = "#e74c3c";
         }
 
-        // 初回の画面描画
         updateUI();
     </script>
 </body>
