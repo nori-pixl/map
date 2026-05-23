@@ -4,14 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学区内公共施設アンロック</title>
-    <!-- 地図ライブラリLeafletのスタイル -->
     <link rel="stylesheet" href="https://unpkg.com" />
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #eef2f3; overflow: hidden; }
-        /* 🗺️ 地図を表示するエリア */
         #map { width: 100%; height: 55%; position: absolute; top: 0; z-index: 1; }
-        
-        /* 🏢 下半分の情報パネル */
         #panel {
             position: absolute; bottom: 0; width: 100%; height: 45%; z-index: 10;
             background: white; border-top-left-radius: 24px; border-top-right-radius: 24px;
@@ -19,9 +15,8 @@
         }
         .header { padding: 15px; text-align: center; border-bottom: 1px solid #eee; background: #f8f9fa; border-top-left-radius: 24px; border-top-right-radius: 24px; }
         .header h2 { margin: 0; font-size: 18px; color: #2c3e50; }
-        #progress { font-size: 13px; color: #7f8c8d; margin-top: 5px; font-weight: bold; }
+        #progress { font-size: 13px; color: #3498db; margin-top: 5px; font-weight: bold; }
         
-        /* 施設カードのリスト */
         .list-container { flex: 1; overflow-y: auto; padding: 15px; box-sizing: border-box; }
         .facility-card { display: flex; padding: 12px; margin-bottom: 10px; background: #fff; border-radius: 12px; border: 1px solid #e0e0e0; align-items: center; }
         .facility-card.unlocked { border: 2px solid #3498db; background: #e8f4fd; }
@@ -33,63 +28,35 @@
         .desc { font-size: 12px; color: #95a5a6; margin-top: 3px; }
         .unlocked .desc { color: #5d6d7e; }
         
-        /* 🎉 アンロック時のポップアップ */
-        #alert {
-            display: none; position: fixed; top: 25%; left: 5%; width: 90%; box-sizing: border-box;
-            background: #3498db; color: white; text-align: center; padding: 25px; border-radius: 16px; z-index: 100; font-size: 20px; font-weight: bold;
+        /* 🔘 右上に浮かぶ「手動GPS起動ボタン」 */
+        #gps-start-btn {
+            position: absolute; top: 15px; right: 15px; z-index: 100;
+            padding: 12px 20px; background: #e74c3c; color: white;
+            border: none; border-radius: 30px; font-weight: bold; font-size: 14px;
+            box-shadow: 0 4px 15px rgba(231,76,60,0.4); cursor: pointer;
+            animation: pulse 1.5s infinite;
         }
-
-        /* ⏳ 準備中のローディング＆ゲージ画面 */
-        #loading-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(44, 62, 80, 0.98); color: white;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            z-index: 9999; text-align: center; padding: 30px; box-sizing: border-box;
-            transition: opacity 0.5s ease;
-        }
-        .loading-spinner { font-size: 50px; margin-bottom: 20px; animation: spin 2s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        /* 📊 進行状況ゲージの見た目 */
-        .progress-bar-container {
-            width: 80%; max-width: 300px; height: 12px; background: #34495e;
-            border-radius: 6px; overflow: hidden; margin-top: 15px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
-        }
-        .progress-bar-fill {
-            height: 100%; width: 10%;
-            background: #3498db; border-radius: 6px;
-            transition: width 0.4s ease;
-        }
-        #loading-status { font-size: 14px; color: #bdc3c7; margin-top: 10px; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
     </style>
 </head>
 <body>
 
-    <!-- ⏳ 位置情報ロード画面（ゲージ付き） -->
-    <div id="loading-overlay">
-        <div class="loading-spinner">📡</div>
-        <h3 id="loading-title">ゲームを初期化中...</h3>
-        <p>画面にポップアップが出たら必ず「許可」を押してください。</p>
-        <div class="progress-bar-container">
-            <div id="pb-fill" class="progress-bar-fill"></div>
-        </div>
-        <div id="loading-status">システム起動中 (10%)</div>
-    </div>
+    <!-- 🔘 動かないフリーズを防ぐための手動スイッチ -->
+    <button id="gps-start-btn" onclick="startGPS()">📡 タップしてGPS接続</button>
 
-    <!-- ゲーム本体画面 -->
+    <!-- ゲーム本体画面（最初から表示させます） -->
     <div id="map"></div>
     <div id="panel">
         <div class="header">
             <h2>🏢 公共施設アンロッククエスト</h2>
-            <div id="progress">位置情報を同期中...</div>
+            <div id="progress">上の赤いボタンを押してスタート！</div>
         </div>
         <div class="list-container" id="list"></div>
     </div>
-    <div id="alert"></div>
 
-    <!-- 地図プログラムの読み込み -->
-    <script src="https://unpkg.com"></script><script>
-                let map, playerMarker, mapCircles = {}, isFirstLocation = true;
+    <script src="https://unpkg.com"></script>
+    <script>
+        let map, playerMarker, mapCircles = {}, isFirstLocation = true;
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
 
         // 🏫 学区内施設データ（例：若林区周辺）
@@ -98,51 +65,26 @@
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
         ];
 
-        function updateProgressBar(widthPercent, text) {
-            const fill = document.getElementById('pb-fill');
-            const status = document.getElementById('loading-status');
-            if (fill) fill.style.width = widthPercent + "%";
-            if (status) status.textContent = `${text} (${widthPercent}%)`;
-        }
+        // 🗺️ 起動した瞬間に、GPSを無視して先に地図画面を強制展開
+        map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // =========================================================
-        // 🔄 ステップ1: 起動直後に位置情報の要求を開始（10%）
-        // =========================================================
-        updateProgressBar(10, "位置情報の権限を要求中...");
+        // 🔘 赤いボタンを押したときにだけ、初めてスマホに位置情報を要求する関数
+        function startGPS() {
+            const btn = document.getElementById('gps-start-btn');
+            btn.style.background = "#34495e";
+            btn.textContent = "⌛ 電波を探しています...";
 
-        if (navigator.geolocation) {
-            // ⭐ 【超重要】フリーズ回避のため、最初は確実に動く低精度要求から試すように設定を緩和
-            navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
-                enableHighAccuracy: false, // 🟥 最初はハードウェアGPSを強制せず、通信局のデータも受け入れる（超重要）
-                maximumAge: 30000,         // 30秒前のキャッシュ位置情報も許容して最速で画面を開く
-                timeout: 25000             // 電波を待つ時間を25秒に延長
-            });
-            
-            setTimeout(() => {
-                // =========================================================
-                // 🔄 ステップ2: 地図エンジンのセットアップ（40%）
-                // =========================================================
-                updateProgressBar(40, "地図システムを展開中...");
-                map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
-                L.control.zoom({ position: 'bottomright' }).addTo(map);
-                
-                // =========================================================
-                // 🔄 ステップ3: グラフィックタイルの読み込み（70%）
-                // =========================================================
-                updateProgressBar(70, "地図画像を読み込み中...");
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-                // =========================================================
-                // 🔄 ステップ4: GPSシグナルの同期待機（85%）
-                // =========================================================
-                if (isFirstLocation) {
-                    updateProgressBar(85, "宇宙からのGPS電波を同期中...");
-                    document.getElementById('loading-title').textContent = "📡 位置情報を同期中...";
-                }
-            }, 300);
-
-        } else {
-            document.getElementById('loading-title').textContent = "対応していません";
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
+                    enableHighAccuracy: false, // フリーズを防ぐため低精度から優しく繋ぐ
+                    maximumAge: 30000,
+                    timeout: 15000
+                });
+            } else {
+                alert("お使いの端末は位置情報に対応していません。");
+            }
         }
 
         function updateUI() {
@@ -180,28 +122,13 @@
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
         }
 
-        // =========================================================
-        // 🔄 ステップ5: 同期成功！100%になってゲーム画面へ（100%）
-        // =========================================================
+        // GPS接続に成功した時
         function onWatchPosition(position) {
-            if (isFirstLocation) {
-                updateProgressBar(100, "位置情報の同期が完了しました！");
-                
-                // ロード画面を消す
-                setTimeout(() => {
-                    const overlay = document.getElementById('loading-overlay');
-                    if (overlay) {
-                        overlay.style.opacity = 0;
-                        setTimeout(() => { overlay.style.display = 'none'; }, 500);
-                    }
-                }, 400);
-
-                // ⭐ 一度画面が開いたら、ここからバックグラウンドで最高精度モード（HighAccuracy）に自動格上げ要求を飛ばす
-                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
-                    enableHighAccuracy: true, 
-                    maximumAge: 0 
-                });
-            }
+            // ボタンを「接続中」の緑色にする
+            const btn = document.getElementById('gps-start-btn');
+            btn.style.background = "#2ecc71";
+            btn.textContent = "🟢 GPS接続中";
+            btn.style.animation = "none"; // 点滅を止める
 
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
@@ -215,6 +142,12 @@
             if (isFirstLocation) {
                 map.setView([pLat, pLng], 16); 
                 isFirstLocation = false;
+                
+                // 1度繋がったら、ここから最高精度（HighAccuracy）へ格上げを要求
+                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
+                    enableHighAccuracy: true, 
+                    maximumAge: 0 
+                });
             } else {
                 map.panTo([pLat, pLng]);
             }
@@ -231,12 +164,18 @@
 
         function onLocationError(err) {
             console.log("GPSエラー:", err.message);
-            document.getElementById('loading-title').textContent = "⚠️ 同期に失敗しました";
-            document.getElementById('loading-status').textContent = `原因: ${err.message} (設定から位置情報を許可して再度お試しください)`;
-            const fill = document.getElementById('pb-fill');
-            if (fill) fill.style.background = "#e74c3c";
+            const btn = document.getElementById('gps-start-btn');
+            btn.style.background = "#e74c3c";
+            btn.textContent = "❌ 接続失敗（再試行）";
+            
+            if(err.code === 1) {
+                alert("位置情報が拒否されました。スマホの設定でブラウザの位置情報を「許可」してください。");
+            } else {
+                alert("電波が弱いです。窓際か外に出てからもう一度押してください。");
+            }
         }
 
+        // リスト描画
         updateUI();
     </script>
 </body>
