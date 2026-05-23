@@ -28,7 +28,6 @@
         .desc { font-size: 12px; color: #95a5a6; margin-top: 3px; }
         .unlocked .desc { color: #5d6d7e; }
         
-        /* 🔘 右上に浮かぶ「手動GPS起動ボタン」 */
         #gps-start-btn {
             position: absolute; top: 15px; right: 15px; z-index: 100;
             padding: 12px 20px; background: #e74c3c; color: white;
@@ -41,10 +40,8 @@
 </head>
 <body>
 
-    <!-- 🔘 動かないフリーズを防ぐための手動スイッチ -->
     <button id="gps-start-btn" onclick="startGPS()">📡 タップしてGPS接続</button>
 
-    <!-- ゲーム本体画面（最初から表示させます） -->
     <div id="map"></div>
     <div id="panel">
         <div class="header">
@@ -59,18 +56,22 @@
         let map, playerMarker, mapCircles = {}, isFirstLocation = true;
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
 
-        // 🏫 学区内施設データ（例：若林区周辺）
+        // 🏫 学区内施設データ（初期表示用の座標もここに合わせます）
         const facilities = [
             { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
         ];
 
-        // 🗺️ 起動した瞬間に、GPSを無視して先に地図画面を強制展開
+        // 地図の初期化（施設のある座標を初期位置にセット）
         map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // 🔘 赤いボタンを押したときにだけ、初めてスマホに位置情報を要求する関数
+        // ⭐【国土地理院マップに変更】日本の公共サーバーから超高速で読み込みます
+        L.tileLayer('https://gsi.go.jp{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '<a href="https://gsi.go.jp" target="_blank">国土地理院</a>'
+        }).addTo(map);
+
         function startGPS() {
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#34495e";
@@ -78,7 +79,7 @@
 
             if (navigator.geolocation) {
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
-                    enableHighAccuracy: false, // フリーズを防ぐため低精度から優しく繋ぐ
+                    enableHighAccuracy: false, 
                     maximumAge: 30000,
                     timeout: 15000
                 });
@@ -122,13 +123,11 @@
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
         }
 
-        // GPS接続に成功した時
         function onWatchPosition(position) {
-            // ボタンを「接続中」の緑色にする
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#2ecc71";
             btn.textContent = "🟢 GPS接続中";
-            btn.style.animation = "none"; // 点滅を止める
+            btn.style.animation = "none";
 
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
@@ -143,7 +142,9 @@
                 map.setView([pLat, pLng], 16); 
                 isFirstLocation = false;
                 
-                // 1度繋がったら、ここから最高精度（HighAccuracy）へ格上げを要求
+                // タイルバグ対策：画面のサイズ変更イベントを強制的に呼んで地図をリフレッシュする
+                setTimeout(() => { map.invalidateSize(); }, 200);
+
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
                     enableHighAccuracy: true, 
                     maximumAge: 0 
@@ -167,15 +168,11 @@
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#e74c3c";
             btn.textContent = "❌ 接続失敗（再試行）";
-            
             if(err.code === 1) {
-                alert("位置情報が拒否されました。スマホの設定でブラウザの位置情報を「許可」してください。");
-            } else {
-                alert("電波が弱いです。窓際か外に出てからもう一度押してください。");
+                alert("位置情報が拒否されました。設定を確認してください。");
             }
         }
 
-        // リスト描画
         updateUI();
     </script>
 </body>
