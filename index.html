@@ -33,38 +33,50 @@
             background: #3498db; color: white; text-align: center; padding: 25px; border-radius: 16px; z-index: 100; font-size: 20px; font-weight: bold;
         }
 
-        /* 🔒 強制割り込みポップアップ（最前面に固定） */
-        #force-permission-overlay {
+        /* ⏳ 準備中のローディング＆ゲージ画面（最前面） */
+        #loading-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgb(44, 62, 80); color: white;
+            background: rgba(44, 62, 80, 0.98); color: white;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             z-index: 9999; text-align: center; padding: 30px; box-sizing: border-box;
+            transition: opacity 0.5s ease; /* 消えるときのスムーズなアニメーション */
         }
-        .lock-icon { font-size: 60px; margin-bottom: 20px; animation: pulse 1.5s infinite; }
-        .retry-btn {
-            margin-top: 25px; padding: 12px 30px; background: #e74c3c; color: white;
-            border: none; border-radius: 25px; font-size: 16px; font-weight: bold; cursor: pointer;
-            box-shadow: 0 4px 15px rgba(231,76,60,0.4);
+        .loading-spinner { font-size: 50px; margin-bottom: 20px; animation: spin 2s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* ゲージの枠線 */
+        .progress-bar-container {
+            width: 80%; max-width: 300px; height: 12px; background: #34495e;
+            border-radius: 6px; overflow: hidden; margin-top: 15px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
         }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        /* 📄 動くゲージ本体 */
+        .progress-bar-fill {
+            height: 100%; width: 10%; /* 最初は10% */
+            background: #3498db; border-radius: 6px;
+            transition: width 0.4s ease; /* ゲージが伸びるアニメーション */
+        }
+        #loading-status { font-size: 14px; color: #bdc3c7; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <!-- 🔒 位置情報がONになるまで画面を完全にブロックする要素 -->
-    <div id="force-permission-overlay">
-        <div class="lock-icon">📡❌</div>
-        <h2>位置情報の許可が必要です</h2>
-        <p>このゲームはあなたの現在地を使って学区を開拓します。<br>ブラウザのポップアップ、または設定から位置情報を「許可」にしてください。</p>
-        <button class="retry-btn" onclick="requestGPS()">もう一度許可を求める</button>
+    <!-- ⏳ 位置情報ロード画面（ゲージ付き） -->
+    <div id="loading-overlay">
+        <div class="loading-spinner">📡</div>
+        <h3 id="loading-title">GPSシグナルを探しています...</h3>
+        <p>学区内の地図を展開中。しばらくお待ちください。</p>
+        <div class="progress-bar-container">
+            <div id="pb-fill" class="progress-bar-fill"></div>
+        </div>
+        <div id="loading-status">接続中 (10%)</div>
     </div>
 
-    <!-- ゲーム本体の画面 -->
+    <!-- ゲーム本体画面 -->
     <div id="map"></div>
     <div id="panel">
         <div class="header">
             <h2>🏢 公共施設アンロッククエスト</h2>
-            <div id="progress">準備中...</div>
+            <div id="progress">位置情報を同期中...</div>
         </div>
         <div class="list-container" id="list"></div>
     </div>
@@ -72,7 +84,7 @@
 
     <script src="https://unpkg.com"></script>
     <script>
-        // 学区内施設データ（例：若林区周辺。実データに変えてください）
+        // 🏫 学区内施設データ（初期位置をここに固定してフリーズを回避します）
         const facilities = [
             { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
@@ -81,9 +93,13 @@
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
         let map, playerMarker, mapCircles = {}, isFirstLocation = true;
 
-        // マップ初期化（右下にズーム設置）
-        map = L.map('map', { zoomControl: false }).setView([35.6895, 139.6917], 16);
+        // 1. マップの初期化（最初から東京ではなく登録施設がある座標を開く）
+        map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // 地図タイル画像の読み込み開始（ゲージを50%に進める）
+        updateProgressBar(50, "地図データを読み込み中...");
+        
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
         function updateUI() {
@@ -112,6 +128,12 @@
             document.getElementById('progress').textContent = `解放率: ${percent}% (${unlockCount}/${facilities.length})`;
         }
 
+        // 📊 ゲージをコントロールする関数
+        function updateProgressBar(widthPercent, text) {
+            document.getElementById('pb-fill').style.width = widthPercent + "%";
+            document.getElementById('loading-status').textContent = `${text} (${widthPercent}%)`;
+        }
+
         function getDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
@@ -120,10 +142,15 @@
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
         }
 
-        // GPS追跡に成功した時（＝位置情報の権限が上がった瞬間）
+        // GPS受信成功時
         function onWatchPosition(position) {
-            // 🔒 許可されたのでブロック画面を非表示にして消し去る
-            document.getElementById('force-permission-overlay').style.display = 'none';
+            // ゲージを100%にしてローディング画面をフェードアウト消去
+            updateProgressBar(100, "同期完了！");
+            setTimeout(() => {
+                const overlay = document.getElementById('loading-overlay');
+                overlay.style.opacity = 0;
+                setTimeout(() => { overlay.style.display = 'none'; }, 500); // 完全に消す
+            }, 400);
 
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
@@ -151,28 +178,27 @@
             });
         }
 
-        // 許可されなかった、またはエラーの時
         function onLocationError(err) {
-            // ブロック画面を再度しっかり出す
-            document.getElementById('force-permission-overlay').style.display = 'flex';
             console.log("GPSエラー:", err.message);
+            document.getElementById('loading-title').textContent = "⚠️ 位置情報がブロックされました";
+            document.getElementById('loading-status').textContent = "ブラウザの設定から位置情報を許可してください。";
+            document.getElementById('pb-fill').style.background = "#e74c3c"; // ゲージを赤色に変える
         }
 
-        // 📡 最高精度・リアルタイムで位置情報の権利（要求）を送る関数
-        function requestGPS() {
-            if (navigator.geolocation) {
-                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
-                    enableHighAccuracy: true, // ⭐ 最も重要な設定。機器の最高精度GPS（ハードウェア）の権利を要求する
-                    maximumAge: 0,            // キャッシュされた古い位置情報を使わず、必ず最新を取得する
-                    timeout: 10000            // 10秒以内に応答がなければエラーにする
-                });
-            } else {
-                alert("お使いの端末はGPSに対応していません。");
-            }
+        // GPS起動要求（権利を上げる）
+        if (navigator.geolocation) {
+            // 要求を飛ばした段階で少しゲージを増やす
+            updateProgressBar(30, "位置情報の権限を確認中...");
+            
+            navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 15000
+            });
+        } else {
+            document.getElementById('loading-title').textContent = "対応していません";
         }
 
-        // 起動時にまずGPSの権利を要求
-        requestGPS();
         updateUI();
     </script>
 </body>
