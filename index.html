@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学区内公共施設アンロック</title>
+    <link rel="stylesheet" href="https://unpkg.com" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #eef2f3; overflow: hidden; }
+        #map { width: 100%; height: 55%; position: absolute; top: 0; z-index: 1; }
+        #panel {
+            position: absolute; bottom: 0; width: 100%; height: 45%; z-index: 10;
+            background: white; border-top-left-radius: 24px; border-top-right-radius: 24px;
+            box-shadow: 0 -8px 24px rgba(0,0,0,0.15); display: flex; flex-direction: column;
+        }
+        .header { padding: 15px; text-align: center; border-bottom: 1px solid #eee; background: #f8f9fa; border-top-left-radius: 24px; border-top-right-radius: 24px; }
+        .header h2 { margin: 0; font-size: 18px; color: #2c3e50; }
+        #progress { font-size: 13px; color: #7f8c8d; margin-top: 5px; font-weight: bold; }
+        
+        .list-container { flex: 1; overflow-y: auto; padding: 15px; box-sizing: border-box; }
+        .facility-card { display: flex; padding: 12px; margin-bottom: 10px; background: #fff; border-radius: 12px; border: 1px solid #e0e0e0; align-items: center; }
+        .facility-card.unlocked { border: 2px solid #3498db; background: #e8f4fd; }
+        .icon { font-size: 24px; margin-right: 12px; filter: grayscale(100%); opacity: 0.4; }
+        .unlocked .icon { filter: grayscale(0%); opacity: 1; }
+        .info { flex: 1; }
+        .name { font-weight: bold; font-size: 15px; color: #7f8c8d; }
+        .unlocked .name { color: #2c3e50; }
+        .desc { font-size: 12px; color: #95a5a6; margin-top: 3px; }
+        .unlocked .desc { color: #5d6d7e; }
+        
+        #alert {
+            display: none; position: fixed; top: 25%; left: 5%; width: 90%; box-sizing: border-box;
+            background: #3498db; color: white; text-align: center; padding: 25px; border-radius: 16px; z-index: 100; font-size: 20px; font-weight: bold;
+        }
+
+        /* 🔒 強制割り込みポップアップ（最前面に固定） */
+        #force-permission-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgb(44, 62, 80); color: white;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 9999; text-align: center; padding: 30px; box-sizing: border-box;
+        }
+        .lock-icon { font-size: 60px; margin-bottom: 20px; animation: pulse 1.5s infinite; }
+        .retry-btn {
+            margin-top: 25px; padding: 12px 30px; background: #e74c3c; color: white;
+            border: none; border-radius: 25px; font-size: 16px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(231,76,60,0.4);
+        }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+    <!-- 🔒 位置情報がONになるまで画面を完全にブロックする要素 -->
+    <div id="force-permission-overlay">
+        <div class="lock-icon">📡❌</div>
+        <h2>位置情報の許可が必要です</h2>
+        <p>このゲームはあなたの現在地を使って学区を開拓します。<br>ブラウザのポップアップ、または設定から位置情報を「許可」にしてください。</p>
+        <button class="retry-btn" onclick="requestGPS()">もう一度許可を求める</button>
+    </div>
+
+    <!-- ゲーム本体の画面 -->
+    <div id="map"></div>
+    <div id="panel">
+        <div class="header">
+            <h2>🏢 公共施設アンロッククエスト</h2>
+            <div id="progress">準備中...</div>
+        </div>
+        <div class="list-container" id="list"></div>
+    </div>
+    <div id="alert"></div>
+
+    <script src="https://unpkg.com"></script>
+    <script>
+        // 学区内施設データ（例：若林区周辺。実データに変えてください）
+        const facilities = [
+            { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
+            { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
+        ];
+
+        let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
+        let map, playerMarker, mapCircles = {}, isFirstLocation = true;
+
+        // マップ初期化（右下にズーム設置）
+        map = L.map('map', { zoomControl: false }).setView([35.6895, 139.6917], 16);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        function updateUI() {
+            const listContainer = document.getElementById('list');
+            listContainer.innerHTML = '';
+            let unlockCount = 0;
+
+            facilities.forEach(f => {
+                const isUnlocked = unlockedIds.includes(f.id);
+                if (isUnlocked) unlockCount++;
+
+                const card = document.createElement('div');
+                card.className = `facility-card ${isUnlocked ? 'unlocked' : ''}`;
+                card.innerHTML = `<div class="icon">${f.icon}</div><div class="info"><div class="name">${isUnlocked ? f.name : "？？？（未解放）"}</div><div class="desc">${isUnlocked ? f.desc : "この付近に行くと施設がアンロックされるぞ！"}</div></div>`;
+                listContainer.appendChild(card);
+
+                const circleColor = isUnlocked ? '#3498db' : '#95a5a6';
+                if (mapCircles[f.id]) {
+                    mapCircles[f.id].setStyle({ color: circleColor, fillColor: circleColor });
+                } else {
+                    const circle = L.circle([f.lat, f.lng], { color: circleColor, fillColor: circleColor, fillOpacity: 0.25, radius: 30 }).addTo(map);
+                    mapCircles[f.id] = circle;
+                }
+            });
+            const percent = Math.round((unlockCount / facilities.length) * 100);
+            document.getElementById('progress').textContent = `解放率: ${percent}% (${unlockCount}/${facilities.length})`;
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
+            const df = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2) * Math.sin(dl/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        // GPS追跡に成功した時（＝位置情報の権限が上がった瞬間）
+        function onWatchPosition(position) {
+            // 🔒 許可されたのでブロック画面を非表示にして消し去る
+            document.getElementById('force-permission-overlay').style.display = 'none';
+
+            const pLat = position.coords.latitude;
+            const pLng = position.coords.longitude;
+
+            if (!playerMarker) {
+                playerMarker = L.circleMarker([pLat, pLng], { color: '#e74c3c', radius: 9, fillColor: '#fff', fillOpacity: 1, weight: 3 }).addTo(map);
+            } else {
+                playerMarker.setLatLng([pLat, pLng]);
+            }
+
+            if (isFirstLocation) {
+                map.setView([pLat, pLng], 16); 
+                isFirstLocation = false;
+            } else {
+                map.panTo([pLat, pLng]);
+            }
+
+            facilities.forEach(f => {
+                if (unlockedIds.includes(f.id)) return;
+                if (getDistance(pLat, pLng, f.lat, f.lng) <= 30) {
+                    unlockedIds.push(f.id);
+                    localStorage.setItem('unlockedFacilities', JSON.stringify(unlockedIds));
+                    updateUI();
+                }
+            });
+        }
+
+        // 許可されなかった、またはエラーの時
+        function onLocationError(err) {
+            // ブロック画面を再度しっかり出す
+            document.getElementById('force-permission-overlay').style.display = 'flex';
+            console.log("GPSエラー:", err.message);
+        }
+
+        // 📡 最高精度・リアルタイムで位置情報の権利（要求）を送る関数
+        function requestGPS() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
+                    enableHighAccuracy: true, // ⭐ 最も重要な設定。機器の最高精度GPS（ハードウェア）の権利を要求する
+                    maximumAge: 0,            // キャッシュされた古い位置情報を使わず、必ず最新を取得する
+                    timeout: 10000            // 10秒以内に応答がなければエラーにする
+                });
+            } else {
+                alert("お使いの端末はGPSに対応していません。");
+            }
+        }
+
+        // 起動時にまずGPSの権利を要求
+        requestGPS();
+        updateUI();
+    </script>
+</body>
+</html>
