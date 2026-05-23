@@ -4,23 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>学区内公共施設アンロック</title>
+    <!-- 地図のスタイルシート -->
+    <link rel="stylesheet" href="https://unpkg.com" />
     <style>
-        body, html { margin: 0; padding: 0; height: 100vh; width: 100vw; font-family: sans-serif; background: #eef2f3; overflow: hidden; }
+        body, html { margin: 0; padding: 0; height: 100vh; width: 100vw; font-family: sans-serif; background: #eef2f3; overflow: hidden; position: relative; }
         
-        /* 🗺️ 上の枠：本物のGoogleマップのサイトを丸ごと埋め込み表示 */
-        #map-container { 
+        /* 🗺️ 地図を表示するエリア（高さをがっちり固定） */
+        #map { 
             position: absolute; 
             top: 0; 
             left: 0;
             width: 100vw; 
             height: 55vh; 
             z-index: 1; 
-            border: none;
-        }
-        #map-container iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
+            background: #e0e0e0;
         }
         
         /* 🏢 下半分の情報パネル */
@@ -49,6 +46,7 @@
         .desc { font-size: 12px; color: #95a5a6; margin-top: 3px; }
         .unlocked .desc { color: #5d6d7e; }
         
+        /* GPS起動ボタン */
         #gps-start-btn {
             position: absolute; top: 15px; right: 15px; z-index: 100;
             padding: 12px 20px; background: #e74c3c; color: white;
@@ -61,15 +59,9 @@
 </head>
 <body>
 
-    <!-- 🔘 GPSの裏側処理を走らせるボタン -->
     <button id="gps-start-btn" onclick="startGPS()">📡 タップしてGPS接続</button>
 
-    <!-- 🗺️ 上の枠：ここにGoogleマップのWEBサイトを表示させます -->
-    <div id="map-container">
-        <!-- 💡 初期位置：あなたの学区（例：若林区周辺）のマップを表示。倍率も自由に変えられます -->
-        <iframe id="gmap" src="https://google.com"></iframe>
-    </div>
-
+    <div id="map"></div>
     <div id="panel">
         <div class="header">
             <h2>🏢 公共施設アンロッククエスト</h2>
@@ -78,23 +70,40 @@
         <div class="list-container" id="list"></div>
     </div>
 
+    <!-- 地図を動かすためのライブラリ本体 -->
+    <script src="https://unpkg.com"></script>
     <script>
-        let playerMarker, isFirstLocation = true;
+        let map, playerMarker, mapCircles = {}, isFirstLocation = true;
         let unlockedIds = JSON.parse(localStorage.getItem('unlockedFacilities')) || [];
 
-        // 🏫 学区内施設データ（実際の座標）
+        // 🏫 学区内施設データ（例として仙台市若林区周辺にしています。後から自由に変更可能！）
         const facilities = [
             { id: "school", name: "若林小学校", lat: 38.241517, lng: 140.895312, icon: "🏫", desc: "僕たちの学校。放課後は校庭で遊べるよ！" },
             { id: "library", name: "若林図書館", lat: 38.244300, lng: 140.898500, icon: "📚", desc: "静かに本を読む場所。おすすめの漫画もあるかも。" }
         ];
 
+        // 🗺️ 地図の初期設定（日本をカバーする日本の安定タイルサーバーを使用）
+        map = L.map('map', { zoomControl: false }).setView([38.244300, 140.898500], 16);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        L.tileLayer('https://gsi.go.jp{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '国土地理院'
+        }).addTo(map);
+
+        // スマホ画面が完全にロードされたら地図の描画バグを強制クリアする命令
+        window.addEventListener('load', function() {
+            setTimeout(() => { map.invalidateSize(); }, 300);
+        });
+
+        // 🔘 GPS接続ボタンを押したとき
         function startGPS() {
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#34495e";
             btn.textContent = "⌛ 電波を探しています...";
 
             if (navigator.geolocation) {
-                // 安全第一で、まずは確実に動く低精度から裏で接続
+                // 安全制限やフリーズを回避するため、最初は低精度で優しく接続を開始
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
                     enableHighAccuracy: false, 
                     maximumAge: 30000,
@@ -119,6 +128,14 @@
                 card.className = `facility-card ${isUnlocked ? 'unlocked' : ''}`;
                 card.innerHTML = `<div class="icon">${f.icon}</div><div class="info"><div class="name">${isUnlocked ? f.name : "？？？（未解放）"}</div><div class="desc">${isUnlocked ? f.desc : "この付近に行くと施設がアンロックされるぞ！"}</div></div>`;
                 listContainer.appendChild(card);
+
+                const circleColor = isUnlocked ? '#3498db' : '#95a5a6';
+                if (mapCircles[f.id]) {
+                    mapCircles[f.id].setStyle({ color: circleColor, fillColor: circleColor });
+                } else {
+                    const circle = L.circle([f.lat, f.lng], { color: circleColor, fillColor: circleColor, fillOpacity: 0.25, radius: 30 }).addTo(map);
+                    mapCircles[f.id] = circle;
+                }
             });
             const percent = Math.round((unlockCount / facilities.length) * 100);
             document.getElementById('progress').textContent = `解放率: ${percent}% (${unlockCount}/${facilities.length})`;
@@ -132,6 +149,7 @@
             return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
         }
 
+        // GPS接続に成功した瞬間の処理
         function onWatchPosition(position) {
             const btn = document.getElementById('gps-start-btn');
             btn.style.background = "#2ecc71";
@@ -141,21 +159,30 @@
             const pLat = position.coords.latitude;
             const pLng = position.coords.longitude;
 
-            // ⭐【神ワザ】GPSの位置が変わるたびに、Googleマップのサイトをあなたの現在地（pLat, pLng）に自動更新！
-            // 地図が自動であなたのいる場所へワープし、現在地マーク（青い丸など）もGoogle純正の動きで表示されます
-            const iframe = document.getElementById('gmap');
-            iframe.src = `https://google.com{pLat},${pLng}&z=16&t=m`;
+            // マップ上に自分の位置を示す赤いピンを表示
+            if (!playerMarker) {
+                playerMarker = L.circleMarker([pLat, pLng], { color: '#e74c3c', radius: 9, fillColor: '#fff', fillOpacity: 1, weight: 3 }).addTo(map);
+            } else {
+                playerMarker.setLatLng([pLat, pLng]);
+            }
 
             if (isFirstLocation) {
+                map.setView([pLat, pLng], 16); 
                 isFirstLocation = false;
-                // 2回目以降は、より正確に判定するため最高精度へ自動切り替え
+                
+                // 地図の非表示バグを完全に撃退する魔法の命令
+                setTimeout(() => { map.invalidateSize(); }, 200);
+
+                // 2回目以降は、より正確に判定するためバックグラウンドで最高精度モード（HighAccuracy）へ切り替え
                 navigator.geolocation.watchPosition(onWatchPosition, onLocationError, { 
                     enableHighAccuracy: true, 
                     maximumAge: 0 
                 });
+            } else {
+                map.panTo([pLat, pLng]);
             }
 
-            // 公共施設の距離チェック（30m以内でアンロック）
+            // 公共施設の距離チェック
             facilities.forEach(f => {
                 if (unlockedIds.includes(f.id)) return;
                 if (getDistance(pLat, pLng, f.lat, f.lng) <= 30) {
